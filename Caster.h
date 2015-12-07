@@ -39,6 +39,10 @@ typedef struct ClientPoint{
 #pragma pack()
 
 
+#define HEARTBEATTAG  0
+#define CONNETREQUEST 1
+#define DATAPACKET    2
+
 
 
 static struct event_base *base = NULL;
@@ -143,22 +147,92 @@ public:
 		memset(&CurrentRequestServer,0x0,sizeof(ClientPoint));
 		return 0;		
 	}
-	virtual void FrameArrived(unsigned char* data,int size,int type){
-	
+
+#ifdef _WIN32
+	static void  Process(void *arg)
+#else
+	static void  *Process(void *arg)
+#endif
+	{
+		Caster *c = (Caster*)arg;
+		
+		event_base_dispatch(base);
+	}
+	virtual void Start()
+	{
+		running = 1;
+		StartThread(Process,NULL,&thread);
+	}
+	virtual void Stop()
+	{
+		running = 0;
+		//void* stat;
+		//SDL_WaitThread(thread,&stat);
+		WaitThread(thread,&stat);
+		int x = 0;
+	}
+	virtual int Error()
+	{
+		#ifdef WIN32
+		int x =  WSAGetLastError();
+				return x;
+		#else 
+				perror("SOCKET");
+				return errno;
+		#endif
 	}
 
-	virtual void onNALUarrived(FrameHeader* h,unsigned char* data){
+	virtual int Close()
+	{
+		running = 0;
+		timeval t = {1,0};
+		event_base_loopexit(base,&t);
+		WaitThread(thread,&stat);
+		int err = Error(); 
+		event_del(&revent);
+		event_del(&clockevent);
+		#ifdef WIN32
+				closesocket(sendcastfd);
+				closesocket(recvcastfd);
+				//WSACleanup();
+		#else
+				::close(sendcastfd);
+				::close(recvcastfd);
 
-		static unsigned char* buf = NULL;
-		int type;
-		if(!buf){
-			buf = (unsigned char*)malloc(100000);
+		#endif
+				return errno;
+	}
+	static void TimeTick(const int fd, const short which, void *arg)
+	{
+		Caster *c = (Caster*)arg;
+		char buff[MAX_MTU] = {0};
+		int	changed = 0;
+		int nSendSize = sendto(c->sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&(c->out_addr), sizeof(sockaddr));
+
+		struct timeval t = {0, 500000 };
+		evtimer_set(&(c->clockevent), TimeTick, arg);
+		event_base_set(base, &(c->clockevent));
+		evtimer_add(&(c->clockevent), &t);
+		vector<ClientPoint>::iterator iter;
+		int  current = GetTickCount();
+		{
+			//		CAutoLocker m_autoLocker(&c->m_locker);
+			for(unsigned int i = 0; i < c->clientlist.size() ;i++){
+
+				if(current - c->clientlist.at(i).lastttime > 3000){
+					c->clientlist.erase(c->clientlist.begin()+i);
+					//超时3s没有收到心跳，则说明客户端断开了
+					changed = 1;
+				}
+
+			}
+			if(current - c->CurrentRequestClient.lasttimeofchattick > 3000){
+				memset(&c->CurrentRequestClient,0x0,sizeof(ClientPoint));
+			}
 		}
-		if(onGram(h,data,h->length)==1){
-			int n = GetLastMessage(buf,100000,&type);
-			if(n>0)
-				FrameArrived(buf,n,type);
-		}
+		if(changed)
+			c->onClientChange();
+		c->SendChatTick();
 	}
 	static void  input(int serfd, short iEvent, void *arg)
 	{
@@ -175,7 +249,7 @@ public:
 		/**
 
 		*/
-		if(buf[0]==1){
+		if(buf[0]==CONNETREQUEST){
 			if(c->CurrentRequestClient.ip==0){
 				c->CurrentRequestClient.ip = sin_from.sin_addr.s_addr;
 				c->CurrentRequestClient.lasttimeofchattick = current;
@@ -189,7 +263,7 @@ public:
 				}
 			}
 		}
-		if(buf[0]==2 && sin_from.sin_addr.s_addr == c->CurrentRequestServer.ip){
+		if(buf[0]==DATAPACKET && sin_from.sin_addr.s_addr == c->CurrentRequestServer.ip){
 			FrameHeader h;
 			memcpy(&h,buf+1,sizeof(FrameHeader));
 			c->onNALUarrived(&h,buf+1+sizeof(FrameHeader));
@@ -219,6 +293,24 @@ public:
 			c->onClientChange();
 		
 	}
+	virtual void FrameArrived(unsigned char* data,int size,int type){
+
+	}
+
+	virtual void onNALUarrived(FrameHeader* h,unsigned char* data){
+
+		static unsigned char* buf = NULL;
+		int type;
+		if(!buf){
+			buf = (unsigned char*)malloc(100000);
+		}
+		if(onGram(h,data,h->length)==1){
+			int n = GetLastMessage(buf,100000,&type);
+			if(n>0)
+				FrameArrived(buf,n,type);
+		}
+	}
+
 	virtual void SendChatTick()
 	{
 		char buff[MAX_MTU] = {0};
@@ -231,96 +323,10 @@ public:
 			int nSendSize = sendto(sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
 		}	
 	}
-	static void TimeTick(const int fd, const short which, void *arg)
-	{
-		Caster *c = (Caster*)arg;
-		char buff[MAX_MTU] = {0};
-		int	changed = 0;
-		int nSendSize = sendto(c->sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&(c->out_addr), sizeof(sockaddr));
-		
-		struct timeval t = {0, 500000 };
-		evtimer_set(&(c->clockevent), TimeTick, arg);
-		event_base_set(base, &(c->clockevent));
-		evtimer_add(&(c->clockevent), &t);
-		vector<ClientPoint>::iterator iter;
-		int  current = GetTickCount();
-		{
-	//		CAutoLocker m_autoLocker(&c->m_locker);
-			for(unsigned int i = 0; i < c->clientlist.size() ;i++){
 
-				if(current - c->clientlist.at(i).lastttime > 3000){
-					c->clientlist.erase(c->clientlist.begin()+i);
-					//超时3s没有收到心跳，则说明客户端断开了
-					changed = 1;
-				}
-	
-			}
-			if(current - c->CurrentRequestClient.lasttimeofchattick > 3000){
-				memset(&c->CurrentRequestClient,0x0,sizeof(ClientPoint));
-			}
-		}
-		if(changed)
-			c->onClientChange();
-		c->SendChatTick();
-	}
 	virtual void onClientChange()
 	{
 		return ;
-	}
-#ifdef _WIN32
-	static void  Process(void *arg)
-#else
-	static void  *Process(void *arg)
-#endif
-	{
-		Caster *c = (Caster*)arg;
-		
-		event_base_dispatch(base);
-	}
-	virtual void Start()
-	{
-		running = 1;
-		StartThread(Process,NULL,&thread);
-	}
-	virtual void Stop()
-	{
-		running = 0;
-		void* stat;
-		//SDL_WaitThread(thread,&stat);
-		WaitThread(thread,&stat);
-		int x = 0;
-	}
-	virtual int Error()
-	{
-		#ifdef WIN32
-		int x =  WSAGetLastError();
-				return x;
-		#else 
-				perror("SOCKET");
-				return errno;
-		#endif
-	}
-
-	virtual int Close()
-	{
-		running = 0;
-		timeval t = {1,0};
-		void *stat;
-		event_base_loopexit(base,&t);
-		WaitThread(thread,&stat);
-		int err = Error(); 
-		event_del(&revent);
-		event_del(&clockevent);
-		#ifdef WIN32
-				closesocket(sendcastfd);
-				closesocket(recvcastfd);
-				//WSACleanup();
-		#else
-				::close(sendcastfd);
-				::close(recvcastfd);
-
-		#endif
-				return errno;
 	}
 	virtual int onClient(void *data,int len){
 		return 0;
@@ -372,7 +378,7 @@ public:
 			int totalNum = l/DataLen + 1;
 			for(;i<totalNum - 1;i++){
 				FrameHeader h = {current,DataLen,i,totalNum,type};
-				buf[0] = 2;
+				buf[0] = DATAPACKET;
 				memcpy(buf+1,(unsigned char*)&h,HeadLen);	
 				memcpy(buf+HeadLen+1,data + i*DataLen,DataLen);
 				int nSendSize = sendto(senddata, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
@@ -383,7 +389,7 @@ public:
 				sendlength += DataLen;
 			}
 			FrameHeader h = {current,l-sendlength,i,totalNum,type};
-			buf[0] = 2;
+			buf[0] = DATAPACKET;
 			memcpy(buf+1,(unsigned char*)&h,HeadLen);	
 			memcpy(buf+HeadLen+1,data + i*DataLen,l-sendlength);
 			sendto(sendcastfd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
@@ -391,7 +397,7 @@ public:
 		else
 		{
 			FrameHeader h = {current,l,0,1,type};
-			buf[0] = 2;
+			buf[0] = DATAPACKET;
 			memcpy(buf+1,(unsigned char*)&h,sizeof(FrameHeader));	
 			memcpy(buf+HeadLen+1,data,l);
 			int nSendSize = sendto(sendcastfd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
