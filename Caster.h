@@ -166,7 +166,7 @@ public:
 	virtual void Stop()
 	{
 		running = 0;
-		//void* stat;
+		void* stat;
 		//SDL_WaitThread(thread,&stat);
 		WaitThread(thread,&stat);
 		int x = 0;
@@ -186,6 +186,7 @@ public:
 	{
 		running = 0;
 		timeval t = {1,0};
+		void *stat;
 		event_base_loopexit(base,&t);
 		WaitThread(thread,&stat);
 		int err = Error(); 

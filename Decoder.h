@@ -18,7 +18,7 @@ public:
 	Decoder()
 		:videocodecctx(NULL),audiocodecctx(NULL),opened(0),swr_ctx(NULL),dst_data(0),dst_size(0)
 	{
-
+		f = NULL;
 	}
 	virtual ~Decoder(){}
 	virtual int open()
@@ -66,6 +66,24 @@ public:
 		int get_audioframe = 0;
 		int l = 0;
 		int ret = 0;
+#if 1
+		
+		if(!f){
+			f = fopen("123.h264","ab+");
+			
+			if(!f){
+				int x = GetLastError();
+				perror("open");
+				return 0;
+			}
+		}
+		
+		fwrite(data,size,1,f);
+		fflush(f);
+#endif 
+
+
+
 		if(type ==1){
 			AVFrame f= {0};
 			f.data[0] = data;
@@ -101,7 +119,7 @@ private:
 	AVPicture           *SRCPicture;
 	uint8_t             *dst_data;
 	int					dst_size;
-
+    FILE               *f ;
 };
 
 #endif /*_DECODE_H_*/

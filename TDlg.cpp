@@ -121,6 +121,7 @@ BOOL CTDlg::OnInitDialog()
 	c->init(3779);
 	c->Start();
 	c->open();
+	c->onChatRequest("192.168.191.3");
 	if(camera->OpenCamera(&w,&h)<0){
 		//::MessageBoxA(GetSafeHwnd(),"不能打开摄像头设备","ERR",0);
 //		_cprintf("不能打开摄像头\n");
