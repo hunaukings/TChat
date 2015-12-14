@@ -45,6 +45,9 @@ typedef struct ClientPoint{
 
 
 
+#define CastPort 3779
+#define DataPort 3780
+
 static struct event_base *base = NULL;
 
 #define MAX_MTU 500
@@ -77,71 +80,12 @@ public:
 	{
 		char 				tmp = 1;
 		StartUp();
-		/****************************************/
-		out_addr.sin_family = AF_INET;
-		out_addr.sin_port = htons(port);
-		out_addr.sin_addr.s_addr = INADDR_BROADCAST;
-		/*****************************************/
 
-		sendcastfd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
-		recvcastfd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
-		sendchattickfd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
-		senddata     = socket(AF_INET, SOCK_DGRAM,0);
-		if (sendcastfd == -1 || recvcastfd == -1 || sendchattickfd == -1) {
-			return Error();
-		}
-#ifdef _WIN32
-		char bOpt = 1;
-#else
-		int bOpt = 1;
-#endif
-		//设置该套接字为广播类型
-		if(setsockopt(sendcastfd, SOL_SOCKET, SO_BROADCAST, &bOpt, sizeof(bOpt))){
-			Close();
-			return Error();
-		}
-
-		if (setsockopt(sendcastfd, SOL_SOCKET, SO_REUSEADDR, &bOpt, sizeof(bOpt))){
-			Close();
-			return Error();
-		}
-
-#ifndef _WIN32
-		int flags = fcntl(sendcastfd, F_GETFL, 0);
-		fcntl(sendcastfd, F_SETFL, flags | O_NONBLOCK);
-#else
-		u_long  ul = 1;
-		if(ioctlsocket(sendcastfd, FIONBIO, &ul) < 0)
+		if(InitCastSocket(3779)<0)
 			return -1;
-#endif
-		if (setsockopt(recvcastfd, SOL_SOCKET, SO_REUSEADDR, &bOpt, sizeof(bOpt))){
-			Close();
-			return Error();
-		}
-		if (setsockopt(sendchattickfd, SOL_SOCKET, SO_REUSEADDR, &bOpt, sizeof(bOpt))){
-			Close();
-			return Error();
-		}
-		in_addr.sin_family = AF_INET;
-		in_addr.sin_port = htons(3779);
-		in_addr.sin_addr.s_addr = 0;
+		if(InitDataSocket(3780)<0)
+			return -1;
 
-		if(bind(recvcastfd, (sockaddr*)&in_addr, sizeof(sockaddr))==-1)
-			return Error();
-
-		event_set(&revent,recvcastfd, EV_READ|EV_PERSIST, input, this); 
-
-		event_base_set(base, &revent); 
-		event_add(&revent, NULL); 
-
-		struct timeval t = {0, 500000 };
-		evtimer_set(&clockevent, TimeTick, this);
-		event_base_set(base, &clockevent); 
-
-		event_add(&clockevent, &t); 
-		memset(&out_chattick,0,sizeof(out_chattick));
-		//if(open()<0)
-		//	return -1;
 		initbuf(5000000,1000);
 		memset(&CurrentRequestClient,0x0,sizeof(ClientPoint));
 		memset(&CurrentRequestServer,0x0,sizeof(ClientPoint));
@@ -203,12 +147,104 @@ public:
 		#endif
 				return errno;
 	}
+	int InitCastSocket(short port)
+	{
+		memset(&cast_addr_remote,0x0,sizeof(cast_addr_remote));
+		cast_addr_remote.sin_family = AF_INET;
+		cast_addr_remote.sin_port = htons(CastPort);
+		cast_addr_remote.sin_addr.s_addr = INADDR_BROADCAST;
+	
+		memset(&cast_addr_local,0x0,sizeof(cast_addr_local));
+	    cast_addr_local.sin_family = AF_INET;
+		cast_addr_local.sin_port = htons(CastPort);
+		cast_addr_local.sin_addr.s_addr = 0;
+		sendcastfd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
+		recvcastfd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
+		if(sendcastfd<0||recvcastfd<0)
+			return Error();
+#ifndef _WIN32
+		int flags = fcntl(sendcastfd, F_GETFL, 0);
+		fcntl(sendcastfd, F_SETFL, flags | O_NONBLOCK);
+		int bOpt = 1;
+		if(setsockopt(sendcastfd, SOL_SOCKET, SO_BROADCAST, &bOpt, sizeof(bOpt))){
+			Close();
+			return Error();
+		}
+#else
+		u_long  ul = 1;
+		char bOpt = 1;
+		if(ioctlsocket(sendcastfd, FIONBIO, &ul) < 0)
+			return -1;
+		if(setsockopt(sendcastfd, SOL_SOCKET, SO_BROADCAST, &bOpt, sizeof(bOpt))){
+			Close();
+			return Error();
+		}
+#endif
+
+
+		if (setsockopt(recvcastfd, SOL_SOCKET, SO_REUSEADDR, &bOpt, sizeof(bOpt))){
+			Close();
+			return Error();
+		}
+
+		if(bind(recvcastfd, (sockaddr*)&cast_addr_local, sizeof(sockaddr))<0)
+			return Error();
+
+		event_set(&revent,recvcastfd, EV_READ|EV_PERSIST, CastInput, this); 
+		event_base_set(base, &revent); 
+		event_add(&revent, NULL); 
+
+		struct timeval t = {0, 500000 };
+		evtimer_set(&clockevent, TimeTick, this);
+		event_base_set(base, &clockevent); 
+
+		event_add(&clockevent, &t); 
+		return 0;
+	}
+	int InitDataSocket(short port)
+	{
+		memset(&data_addr_local,0x0,sizeof(data_addr_local));
+		data_addr_local.sin_family = AF_INET;
+		data_addr_local.sin_port = htons(DataPort);
+		data_addr_local.sin_addr.s_addr = 0;
+
+		recvdatafd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
+		senddatafd = socket(PF_INET, SOCK_DGRAM,IPPROTO_UDP);
+		if(recvdatafd<0 || senddatafd < 0)
+			return Error();
+
+#ifndef _WIN32
+		int bOpt = 1;
+		int flags = fcntl(sendcastfd, F_GETFL, 0);
+		fcntl(sendcastfd, F_SETFL, flags | O_NONBLOCK);
+#else
+		char bOpt = 1;
+		u_long  ul = 1;
+		if(ioctlsocket(senddatafd, FIONBIO, &ul) < 0)
+			return -1;
+#endif
+
+		if(bind(recvdatafd, (sockaddr*)&data_addr_local, sizeof(sockaddr))<0){
+			Close();
+			return Error();
+		}
+		
+		if(setsockopt(senddatafd, SOL_SOCKET, SO_BROADCAST, &bOpt, sizeof(bOpt))){
+			Close();
+			return Error();
+		}
+
+		event_set(&recvdataevent,recvdatafd, EV_READ|EV_PERSIST, DataInput, this); 
+		event_base_set(base, &recvdataevent); 
+		event_add(&recvdataevent, NULL); 
+
+	}
 	static void TimeTick(const int fd, const short which, void *arg)
 	{
 		Caster *c = (Caster*)arg;
 		char buff[MAX_MTU] = {0};
 		int	changed = 0;
-		int nSendSize = sendto(c->sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&(c->out_addr), sizeof(sockaddr));
+		int nSendSize = sendto(c->sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&(c->cast_addr_remote), sizeof(sockaddr));
 
 		struct timeval t = {0, 500000 };
 		evtimer_set(&(c->clockevent), TimeTick, arg);
@@ -235,7 +271,7 @@ public:
 			c->onClientChange();
 		c->SendChatTick();
 	}
-	static void  input(int serfd, short iEvent, void *arg)
+	static void  CastInput(int serfd, short iEvent, void *arg)
 	{
 		unsigned char	buf[MAX_MTU] = {0};
 		Caster			*c = (Caster*)arg;
@@ -247,28 +283,6 @@ public:
 		int				current = GetTickCount();
 	    nAddrLen      =	sizeof(struct sockaddr_in);
 		recvfrom(c->recvcastfd, (char*)buf,MAX_MTU, 0, (sockaddr*)&sin_from,&nAddrLen);
-		/**
-
-		*/
-		if(buf[0]==CONNETREQUEST){
-			if(c->CurrentRequestClient.ip==0){
-				c->CurrentRequestClient.ip = sin_from.sin_addr.s_addr;
-				c->CurrentRequestClient.lasttimeofchattick = current;
-			}
-			else{
-				if(c->CurrentRequestClient.ip == sin_from.sin_addr.s_addr){
-					c->CurrentRequestClient.lasttimeofchattick = current;
-				}
-				else{
-					;//ignore;
-				}
-			}
-		}
-		if(buf[0]==DATAPACKET && sin_from.sin_addr.s_addr == c->CurrentRequestServer.ip){
-			FrameHeader h;
-			memcpy(&h,buf+1,sizeof(FrameHeader));
-			c->onNALUarrived(&h,buf+1+sizeof(FrameHeader));
-		}
 
 		vector<ClientPoint>::iterator iter;
 		{
@@ -294,6 +308,43 @@ public:
 			c->onClientChange();
 		
 	}
+	static void  DataInput(int serfd, short iEvent, void *arg){
+		unsigned char	buf[MAX_MTU] = {0};
+		Caster			*c = (Caster*)arg;
+		int				nAddrLen;
+		int				GotItSelf = 0;
+		int				Changed = 0;
+		struct			sockaddr_in sin_from; 
+		ClientPoint		p = {0,0,0,0};
+		int				current = GetTickCount();
+		nAddrLen      =	sizeof(struct sockaddr_in);
+		int recvlen = recvfrom(c->recvdatafd, (char*)buf,MAX_MTU, 0, (sockaddr*)&sin_from,&nAddrLen);
+		if(recvlen!=500){
+			;
+			return ;
+		}
+		if(buf[0]==CONNETREQUEST){
+			if(c->CurrentRequestClient.ip==0){
+				c->CurrentRequestClient.ip = sin_from.sin_addr.s_addr;
+				c->CurrentRequestClient.lasttimeofchattick = current;
+			}
+			else{
+				if(c->CurrentRequestClient.ip == sin_from.sin_addr.s_addr){
+					c->CurrentRequestClient.lasttimeofchattick = current;
+				}
+				else{
+					;//ignore;
+				}
+			}
+		}else if(buf[0]==DATAPACKET && sin_from.sin_addr.s_addr == c->CurrentRequestServer.ip){
+			FrameHeader h;
+			memcpy(&h,buf+1,sizeof(FrameHeader));
+			c->onNALUarrived(&h,buf+1+sizeof(FrameHeader));
+		}
+	}
+	virtual void onChatRequestByClient(char* client){
+
+	}
 	virtual void FrameArrived(unsigned char* data,int size,int type){
 
 	}
@@ -316,10 +367,10 @@ public:
 	{
 		char buff[MAX_MTU] = {0};
 		SOCKADDR_IN  addr;
-		buff[0] = 1;
+		buff[0] = CONNETREQUEST;
 		if(CurrentRequestServer.ip!=0){
 			addr.sin_family = AF_INET;
-			addr.sin_port = htons(3779);
+			addr.sin_port = htons(DataPort);
 			addr.sin_addr.s_addr = CurrentRequestServer.ip; 
 			int nSendSize = sendto(sendcastfd, buff, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
 		}	
@@ -334,12 +385,12 @@ public:
 	}
 	virtual void AddClientPoint(ClientPoint p)
 	{
-//		CAutoLocker m_autoLocker(&m_locker);
+	//	CAutoLocker m_autoLocker(&m_locker);
 		clientlist.push_back(p);
 	}
 	virtual void DelClientPoint(vector<ClientPoint>::iterator iter)
 	{
-//		CAutoLocker m_autoLocker(&m_locker);
+	//	CAutoLocker m_autoLocker(&m_locker);
 		clientlist.erase(iter);
 	}
 	virtual void GetClientList(vector<ClientPoint> *l)
@@ -371,7 +422,7 @@ public:
 		SOCKADDR_IN   addr;
 
 		addr.sin_family = AF_INET;
-		addr.sin_port = htons(3779);
+		addr.sin_port = htons(DataPort);
 		addr.sin_addr.s_addr = CurrentRequestClient.ip;
 		int i = 0;
 		int sendlength = 0;
@@ -382,7 +433,7 @@ public:
 				buf[0] = DATAPACKET;
 				memcpy(buf+1,(unsigned char*)&h,HeadLen);	
 				memcpy(buf+HeadLen+1,data + i*DataLen,DataLen);
-				int nSendSize = sendto(senddata, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
+				int nSendSize = sendto(senddatafd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
 				if(nSendSize!=500){
 					int x= 0;
 				}
@@ -393,7 +444,7 @@ public:
 			buf[0] = DATAPACKET;
 			memcpy(buf+1,(unsigned char*)&h,HeadLen);	
 			memcpy(buf+HeadLen+1,data + i*DataLen,l-sendlength);
-			sendto(sendcastfd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
+			sendto(senddatafd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
 		}
 		else
 		{
@@ -401,7 +452,7 @@ public:
 			buf[0] = DATAPACKET;
 			memcpy(buf+1,(unsigned char*)&h,sizeof(FrameHeader));	
 			memcpy(buf+HeadLen+1,data,l);
-			int nSendSize = sendto(sendcastfd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
+			int nSendSize = sendto(senddatafd, (const char*)buf, MAX_MTU, 0, (sockaddr*)&addr, sizeof(sockaddr));
 		}
 	}
 	virtual int HasChatRequest(){
@@ -413,15 +464,21 @@ public:
 private:
 	int						sendcastfd;
 	int						recvcastfd;
+	int						recvdatafd;
+	int						senddatafd;
 	int                     sendchattickfd;
 	int                     senddata;
-	SOCKADDR_IN				out_addr;
-	SOCKADDR_IN				in_addr;
+	SOCKADDR_IN				cast_addr;
+	SOCKADDR_IN		        cast_addr_remote;
+	SOCKADDR_IN		        cast_addr_local;
+	SOCKADDR_IN		        data_addr_local;
+	SOCKADDR_IN				data_addr_remote;
 	SOCKADDR_IN             out_chattick;
 	SOCKADDR_IN             in_chattick;
 	ClientPoint             CurrentRequestClient;
 	ClientPoint             CurrentRequestServer;
 	struct	event			revent;
+	struct	event			recvdataevent;
 	struct  event			clockevent;
 	struct  event           chatTickEvent;
 	int						running;
