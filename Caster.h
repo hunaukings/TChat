@@ -217,10 +217,19 @@ public:
 		int bOpt = 1;
 		int flags = fcntl(sendcastfd, F_GETFL, 0);
 		fcntl(sendcastfd, F_SETFL, flags | O_NONBLOCK);
+
+		int snd_size = 50*1024;    
+		int optlen = sizeof(snd_size); 
+		if( setsockopt(sendcastfd, SOL_SOCKET, SO_SNDBUF, &snd_size, optlen)!=0)
+			return -1;
 #else
 		char bOpt = 1;
 		u_long  ul = 1;
 		if(ioctlsocket(senddatafd, FIONBIO, &ul) < 0)
+			return -1;
+		int snd_size = 50*1024;    
+		int optlen = sizeof(snd_size); 
+		if(setsockopt(sendcastfd, SOL_SOCKET, SO_SNDBUF, (const char*)&snd_size, optlen)<0)
 			return -1;
 #endif
 
