@@ -4,12 +4,12 @@
 #include <pthread.h> 
 typedef struct sockaddr_in SOCKADDR_IN;
 
-unsigned int GetTickCount()
+unsigned long GetTickCount()
 {
 	struct timeval tv;
 	struct timezone tz;
 	gettimeofday(&tv,&tz);
-	return tv.tv_sec*1000+tv.tv_usec;
+	return (tv.tv_sec*1000+tv.tv_usec/1000);
 }
 
 #define Sleep usleep 
@@ -28,7 +28,7 @@ unsigned int GetTickCount()
 #else
 
 #include "Windows.h"
-
+#include "process.h"
 #define ThreadPid HANDLE 
 #define ThreadOutStat void*
 #define StartThread(process,userptr,threadpid) do {\

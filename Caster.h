@@ -260,7 +260,7 @@ public:
 		event_base_set(base, &(c->clockevent));
 		evtimer_add(&(c->clockevent), &t);
 		vector<ClientPoint>::iterator iter;
-		int  current = GetTickCount();
+		unsigned long  current = GetTickCount();
 		{
 			//		CAutoLocker m_autoLocker(&c->m_locker);
 			for(unsigned int i = 0; i < c->clientlist.size() ;i++){
@@ -420,12 +420,12 @@ public:
 		CurrentRequestServer.ip = addrptr.s_addr;
 #endif
 	}
-	virtual void SendNALU(unsigned char* data,int l,unsigned char type,unsigned int timestamp)
+	virtual void SendNALU(unsigned char* data,int l,unsigned char type,unsigned long timestamp)
 	{
 		unsigned char buf[MAX_MTU] = {0};
 		int HeadLen = sizeof(FrameHeader);
 		int DataLen = MAX_MTU - HeadLen - 1;
-		int current = GetTickCount();
+		unsigned long current = GetTickCount();
 		current = timestamp;
 	//	_cprintf("Send time %d\n",current);
 		SOCKADDR_IN   addr;
